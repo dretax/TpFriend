@@ -181,7 +181,7 @@ namespace TpFriend
             {
                 if (!File.Exists(ModuleFolder + "\\Settings.ini"))
                 {
-                    File.Create(ModuleFolder + "\\Settings.ini");
+                    File.Create(ModuleFolder + "\\Settings.ini").Dispose();
                     Settings = new IniParser(ModuleFolder + "\\Settings.ini");
                     Settings.AddSetting("Settings", "MaxUses", MaxUses.ToString());
                     Settings.AddSetting("Settings", "Cooldown", Cooldown.ToString());
@@ -198,7 +198,11 @@ namespace TpFriend
                     Settings.AddSetting("Settings", "CannotTeleportTo", "HGIG,");
                     Settings.Save();
                 }
-                Settings = new IniParser(ModuleFolder + "\\Settings.ini");
+                else
+                {
+                    Settings = new IniParser(ModuleFolder + "\\Settings.ini");
+                }
+                
                 PerformCeilingCheck = Settings.GetBoolSetting("Settings", "PerformCeilingCheck");
                 CeilingFallthroughDistanceCheck =
                     float.Parse(Settings.GetSetting("Settings", "CeilingFallthroughDistanceCheck"));
