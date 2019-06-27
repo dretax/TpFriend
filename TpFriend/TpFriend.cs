@@ -327,11 +327,11 @@ namespace TpFriend
                         Pending.Add(player);
                         Pending.Add(playertor);
                         
-                        Dictionary<string, object> Data = new Dictionary<string, object>();
+                        Dictionary<string, object> Data = new Dictionary<string, object>(3);
                         Data["Player"] = player;
                         Data["PlayerTo"] = playertor;
                         Data["Event"] = TeleportationEvent.Timeout;
-                        CreateParallelTimer(RequestTimeout, Data).Start();
+                        CreateParallelTimer(RequestTimeout * 1000, Data).Start();
                     }
                     else
                     {
@@ -379,7 +379,7 @@ namespace TpFriend
                         if (TeleportDelay > 0)
                         {
                             PlayerFrom.MessageFrom(SysName, "Teleporting you in: " + TeleportDelay + " second(s)");
-                            Dictionary<string, object> Data2 = new Dictionary<string, object>();
+                            Dictionary<string, object> Data2 = new Dictionary<string, object>(3);
                             Data2["Player"] = PlayerFrom;
                             Data2["PlayerTo"] = PlayerFrom;
                             Data2["Event"] = TeleportationEvent.FirstTeleport;
@@ -427,7 +427,7 @@ namespace TpFriend
 
                             if (!PerformCeilingCheck)
                             {
-                                Dictionary<string, object> Data3 = new Dictionary<string, object>();
+                                Dictionary<string, object> Data3 = new Dictionary<string, object>(3);
                                 Data3["Player"] = PlayerFrom;
                                 Data3["PlayerTo"] = PlayerFrom;
                                 Data3["Event"] = TeleportationEvent.AutobanReset;
@@ -435,7 +435,7 @@ namespace TpFriend
                             }
                             //DataStore.GetInstance().Add("tpfriendautoban", idt, "none");
 
-                            Dictionary<string, object> Data2 = new Dictionary<string, object>();
+                            Dictionary<string, object> Data2 = new Dictionary<string, object>(3);
                             Data2["Player"] = PlayerFrom;
                             Data2["PlayerTo"] = PlayerFrom;
                             Data2["Event"] = TeleportationEvent.ReTeleported;
@@ -616,7 +616,7 @@ namespace TpFriend
 
                 PlayerFrom.TeleportTo(PlayerTo.Location, false);
                 PlayerFrom.MessageFrom(SysName, "You have been teleported to your friend");
-                Dictionary<string, object> Data2 = new Dictionary<string, object>();
+                Dictionary<string, object> Data2 = new Dictionary<string, object>(3);
                 Data2["Player"] = PlayerFrom;
                 Data2["PlayerTo"] = PlayerFrom;
                 Data2["Event"] = TeleportationEvent.ReTeleported;
@@ -667,7 +667,7 @@ namespace TpFriend
 
                 if (PerformCeilingCheck)
                 {
-                    Dictionary<string, object> Data2 = new Dictionary<string, object>();
+                    Dictionary<string, object> Data2 = new Dictionary<string, object>(3);
                     Data2["Player"] = PlayerFrom;
                     Data2["PlayerTo"] = PlayerFrom;
                     Data2["Event"] = TeleportationEvent.ExtraCheck;
@@ -694,7 +694,7 @@ namespace TpFriend
                     DataStore.GetInstance().Remove("tpfriendy", PlayerFrom.UID);
                 }
                 
-                Dictionary<string, object> Data2 = new Dictionary<string, object>();
+                Dictionary<string, object> Data2 = new Dictionary<string, object>(3);
                 Data2["Player"] = PlayerFrom;
                 Data2["PlayerTo"] = PlayerFrom;
                 Data2["Event"] = TeleportationEvent.AutobanReset;
