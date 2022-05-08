@@ -2,7 +2,9 @@
 using System.Collections.Generic;
 using System.IO;
 using Fougerite;
+using Fougerite.Concurrent;
 using Fougerite.Events;
+using Fougerite.Permissions;
 using UnityEngine;
 using Random = System.Random;
 
@@ -22,7 +24,7 @@ namespace TpFriend
         public IniParser Settings;
         public readonly List<Vector3> DefaultLocations = new List<Vector3>();
         public readonly List<string> CannotTeleport = new List<string>();
-        public readonly List<Fougerite.Player> Pending = new List<Fougerite.Player>();
+        public readonly ConcurrentList<Fougerite.Player> Pending = new ConcurrentList<Fougerite.Player>();
         public bool PerformCeilingCheck = false;
         public float CeilingFallthroughDistanceCheck = 2.6f;
         public int MaxUses = 0;
@@ -35,6 +37,7 @@ namespace TpFriend
         public bool CheckIfPlayerIsNearStructure = false;
         public bool CheckIfPlayerIsOnDeployable = false;
         public bool CheckIfPlayerIsInShelter = false;
+        public bool CheckPermissionsForDefaultCommands = false;
         
         public readonly Random Randomizer = new Random();
         
@@ -59,7 +62,7 @@ namespace TpFriend
 
         public override Version Version
         {
-            get { return new Version("1.0"); }
+            get { return new Version("1.1"); }
         }
 
         public override void Initialize()
@@ -116,9 +119,8 @@ namespace TpFriend
             int count = 0;
             Fougerite.Player Similar = null;
             string printablename = "";
-            if (args as string[] != null)
+            if (args is string[] array)
             {
-                string[] array = args as string[];
                 printablename = string.Join(" ", array);
                 var player = GetPlayerByName(printablename);
                 if (player != null)
@@ -195,6 +197,7 @@ namespace TpFriend
                     Settings.AddSetting("Settings", "CheckIfPlayerIsNearStructure", CheckIfPlayerIsNearStructure.ToString());
                     Settings.AddSetting("Settings", "CheckIfPlayerIsOnDeployable", CheckIfPlayerIsOnDeployable.ToString());
                     Settings.AddSetting("Settings", "CheckIfPlayerIsInShelter", CheckIfPlayerIsInShelter.ToString());
+                    Settings.AddSetting("Settings", "CheckPermissionsForDefaultCommands", CheckPermissionsForDefaultCommands.ToString());
                     Settings.AddSetting("Settings", "CannotTeleportTo", "HGIG,");
                     Settings.Save();
                 }
@@ -216,7 +219,8 @@ namespace TpFriend
                 CheckIfPlayerIsNearStructure = Settings.GetBoolSetting("Settings", "CheckIfPlayerIsNearStructure");
                 CheckIfPlayerIsOnDeployable = Settings.GetBoolSetting("Settings", "CheckIfPlayerIsOnDeployable");
                 CheckIfPlayerIsInShelter = Settings.GetBoolSetting("Settings", "CheckIfPlayerIsInShelter");
-                var CantTP = Settings.GetSetting("Settings", "CannotTeleportTo");
+                CheckPermissionsForDefaultCommands = Settings.GetBoolSetting("Settings", "CheckPermissionsForDefaultCommands");
+                string CantTP = Settings.GetSetting("Settings", "CannotTeleportTo");
                 CannotTeleport.Clear();
                 foreach (var x in CantTP.Split(','))
                 {
@@ -237,9 +241,9 @@ namespace TpFriend
         {
             ulong id = player.UID;
             string name = player.Name;
-            if (cmd == "tpa")
+            switch (cmd)
             {
-                if (args.Length == 0)
+                case "tpa" when args.Length == 0:
                 {
                     player.MessageFrom(SysName, "Teleport Usage:");
                     player.MessageFrom(SysName, "TpFriend V" + Version + " by " + Author);
@@ -249,9 +253,18 @@ namespace TpFriend
                     player.MessageFrom(SysName, "\"/tpcount\" to see how many requests you have remaining.");
                     player.MessageFrom(SysName, "\"/tpcancel\" to cancel your own request.");
                     player.MessageFrom(SysName, "\"/tpreload\" to reload the config.");
+                    break;
                 }
-                else
+                case "tpa":
                 {
+                    if (CheckPermissionsForDefaultCommands &&
+                        (!player.Admin || !PermissionSystem.GetPermissionSystem()
+                            .PlayerHasPermission(player, "tpfriend.tpa")))
+                    {
+                        player.MessageFrom(SysName, "You don't have permission to do this!");
+                        return;
+                    }
+                    
                     Fougerite.Player playertor = FindSimilarPlayer(player, args);
                     if (playertor == null)
                     {
@@ -340,192 +353,245 @@ namespace TpFriend
                         double done2 = Math.Round((double) Cooldown, 2);
                         player.MessageFrom(SysName, "Time Remaining: " + done + " / " + done2 + " seconds");
                     }
+
+                    break;
                 }
-            }
-            else if (cmd == "tpreload")
-            {
-                if (player.Admin)
+                case "tpreload":
                 {
-                    ReloadConfig();
-                    player.MessageFrom(SysName, "Config reloaded!");
-                }
-            }
-            else if (cmd == "tpaccept")
-            {
-                object ppending = DataStore.GetInstance().Get("tpfriendpending2", id);
-                if (ppending != null)
-                {
-                    Fougerite.Player PlayerFrom = Fougerite.Server.GetServer().FindPlayer((ulong) ppending);
-                    if (PlayerFrom != null)
+                    if (player.Admin || PermissionSystem.GetPermissionSystem().PlayerHasPermission(player, "tpfriend.tpreload"))
                     {
+                        ReloadConfig();
+                        player.MessageFrom(SysName, "Config reloaded!");
+                    }
+
+                    break;
+                }
+                case "tpaccept":
+                {
+                    if (CheckPermissionsForDefaultCommands &&
+                        (!player.Admin || !PermissionSystem.GetPermissionSystem()
+                            .PlayerHasPermission(player, "tpfriend.tpaccept")))
+                    {
+                        player.MessageFrom(SysName, "You don't have permission to do this!");
+                        return;
+                    }
+                    
+                    object ppending = DataStore.GetInstance().Get("tpfriendpending2", id);
+                    if (ppending != null)
+                    {
+                        Fougerite.Player PlayerFrom = Fougerite.Server.GetServer().FindPlayer((ulong) ppending);
+                        if (PlayerFrom != null)
+                        {
+                            RemovePlayerFromPending(player);
+                            RemovePlayerFromPending(PlayerFrom);
+
+                            int playertpuse = (int) DataStore.GetInstance().Get("tpfriendusedtp", (ulong) ppending);
+
+                            if (MaxUses > 0)
+                            {
+                                playertpuse++;
+                                DataStore.GetInstance().Add("tpfriendusedtp", (ulong) ppending, playertpuse);
+                                PlayerFrom.MessageFrom(SysName, "Teleport requests used " + playertpuse + " / "
+                                                                + MaxUses);
+                            }
+                            else
+                            {
+                                PlayerFrom.MessageFrom(SysName, "You have unlimited requests remaining!");
+                            }
+
+                            ulong idt = PlayerFrom.UID;
+                            if (TeleportDelay > 0)
+                            {
+                                PlayerFrom.MessageFrom(SysName, "Teleporting you in: " + TeleportDelay + " second(s)");
+                                Dictionary<string, object> Data2 = new Dictionary<string, object>(3);
+                                Data2["Player"] = PlayerFrom;
+                                Data2["PlayerTo"] = PlayerFrom;
+                                Data2["Event"] = TeleportationEvent.FirstTeleport;
+                                CreateParallelTimer(TeleportDelay * 1000, Data2).Start();
+                            }
+                            else
+                            {
+                                if (CheckIfPlayerIsInShelter)
+                                {
+                                    if (player.IsInShelter)
+                                    {
+                                        DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
+                                        PlayerFrom.MessageFrom(SysName, "Your target player is in a shelter, can't teleport!");
+                                        player.MessageFrom(SysName, "You are in a shelter, can't teleport the player!");
+                                        return;
+                                    }
+                                }
+
+                                if (CheckIfPlayerIsOnDeployable)
+                                {
+                                    if (player.IsOnDeployable)
+                                    {
+                                        DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
+                                        PlayerFrom.MessageFrom(SysName, "Your target player is on a Deployable, can't teleport!");
+                                        player.MessageFrom(SysName, "You are on a Deployable, can't teleport the player!");
+                                        return;
+                                    }
+                                }
+
+                                if (CheckIfPlayerIsNearStructure)
+                                {
+                                    if (player.IsNearStructure)
+                                    {
+                                        DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
+                                        PlayerFrom.MessageFrom(SysName, "Your player is near a house, can't teleport!");
+                                        player.MessageFrom(SysName, "You are near a house, can't teleport!");
+                                        return;
+                                    }
+                                }
+
+                                DataStore.GetInstance().Add("tpfriendautoban", PlayerFrom.SteamID, "using");
+                                DataStore.GetInstance().Add("tpfriendy", idt, player.Y);
+                                PlayerFrom.TeleportTo(player.Location);
+                                PlayerFrom.MessageFrom(SysName, "Teleported!");
+
+                                if (!PerformCeilingCheck)
+                                {
+                                    Dictionary<string, object> Data3 = new Dictionary<string, object>(3);
+                                    Data3["Player"] = PlayerFrom;
+                                    Data3["PlayerTo"] = PlayerFrom;
+                                    Data3["Event"] = TeleportationEvent.AutobanReset;
+                                    CreateParallelTimer(500, Data3).Start(); 
+                                }
+                                //DataStore.GetInstance().Add("tpfriendautoban", idt, "none");
+
+                                Dictionary<string, object> Data2 = new Dictionary<string, object>(3);
+                                Data2["Player"] = PlayerFrom;
+                                Data2["PlayerTo"] = PlayerFrom;
+                                Data2["Event"] = TeleportationEvent.ReTeleported;
+                                CreateParallelTimer(DoubleTeleportDelay * 1000, Data2).Start();
+                            }
+
+                            DataStore.GetInstance().Remove("tpfriendpending", idt);
+                            DataStore.GetInstance().Remove("tpfriendpending2", id);
+                            player.MessageFrom(SysName, "Teleport Request Accepted!");
+                        }
+                        else
+                        {
+                            RemovePlayerFromPending(player);
+                            player.MessageFrom(SysName, "Player isn't online!");
+                        }
+                    }
+
+                    break;
+                }
+                case "tpdeny":
+                {
+                    if (CheckPermissionsForDefaultCommands &&
+                        (!player.Admin || !PermissionSystem.GetPermissionSystem()
+                            .PlayerHasPermission(player, "tpfriend.tpdeny")))
+                    {
+                        player.MessageFrom(SysName, "You don't have permission to do this!");
+                        return;
+                    }
+                    
+                    object pending = DataStore.GetInstance().Get("tpfriendpending2", id);
+                    if (pending != null)
+                    {
+                        Fougerite.Player PlayerFrom = Fougerite.Server.GetServer().FindPlayer((ulong) pending);
+                        if (PlayerFrom != null)
+                        {
+                            PlayerFrom.MessageFrom(SysName, red + "Your request was denied!");
+                            RemovePlayerFromPending(PlayerFrom);
+                        }
+
                         RemovePlayerFromPending(player);
-                        RemovePlayerFromPending(PlayerFrom);
-
-                        int playertpuse = (int) DataStore.GetInstance().Get("tpfriendusedtp", (ulong) ppending);
-
-                        if (MaxUses > 0)
-                        {
-                            playertpuse++;
-                            DataStore.GetInstance().Add("tpfriendusedtp", (ulong) ppending, playertpuse);
-                            PlayerFrom.MessageFrom(SysName, "Teleport requests used " + playertpuse + " / "
-                                                            + MaxUses);
-                        }
-                        else
-                        {
-                            PlayerFrom.MessageFrom(SysName, "You have unlimited requests remaining!");
-                        }
-
-                        ulong idt = PlayerFrom.UID;
-                        if (TeleportDelay > 0)
-                        {
-                            PlayerFrom.MessageFrom(SysName, "Teleporting you in: " + TeleportDelay + " second(s)");
-                            Dictionary<string, object> Data2 = new Dictionary<string, object>(3);
-                            Data2["Player"] = PlayerFrom;
-                            Data2["PlayerTo"] = PlayerFrom;
-                            Data2["Event"] = TeleportationEvent.FirstTeleport;
-                            CreateParallelTimer(TeleportDelay * 1000, Data2).Start();
-                        }
-                        else
-                        {
-                            if (CheckIfPlayerIsInShelter)
-                            {
-                                if (player.IsInShelter)
-                                {
-                                    DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
-                                    PlayerFrom.MessageFrom(SysName, "Your target player is in a shelter, can't teleport!");
-                                    player.MessageFrom(SysName, "You are in a shelter, can't teleport the player!");
-                                    return;
-                                }
-                            }
-
-                            if (CheckIfPlayerIsOnDeployable)
-                            {
-                                if (player.IsOnDeployable)
-                                {
-                                    DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
-                                    PlayerFrom.MessageFrom(SysName, "Your target player is on a Deployable, can't teleport!");
-                                    player.MessageFrom(SysName, "You are on a Deployable, can't teleport the player!");
-                                    return;
-                                }
-                            }
-
-                            if (CheckIfPlayerIsNearStructure)
-                            {
-                                if (player.IsNearStructure)
-                                {
-                                    DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
-                                    PlayerFrom.MessageFrom(SysName, "Your player is near a house, can't teleport!");
-                                    player.MessageFrom(SysName, "You are near a house, can't teleport!");
-                                    return;
-                                }
-                            }
-
-                            DataStore.GetInstance().Add("tpfriendautoban", PlayerFrom.SteamID, "using");
-                            DataStore.GetInstance().Add("tpfriendy", idt, player.Y);
-                            PlayerFrom.TeleportTo(player.Location);
-                            PlayerFrom.MessageFrom(SysName, "Teleported!");
-
-                            if (!PerformCeilingCheck)
-                            {
-                                Dictionary<string, object> Data3 = new Dictionary<string, object>(3);
-                                Data3["Player"] = PlayerFrom;
-                                Data3["PlayerTo"] = PlayerFrom;
-                                Data3["Event"] = TeleportationEvent.AutobanReset;
-                                CreateParallelTimer(500, Data3).Start(); 
-                            }
-                            //DataStore.GetInstance().Add("tpfriendautoban", idt, "none");
-
-                            Dictionary<string, object> Data2 = new Dictionary<string, object>(3);
-                            Data2["Player"] = PlayerFrom;
-                            Data2["PlayerTo"] = PlayerFrom;
-                            Data2["Event"] = TeleportationEvent.ReTeleported;
-                            CreateParallelTimer(DoubleTeleportDelay * 1000, Data2).Start();
-                        }
-
-                        DataStore.GetInstance().Remove("tpfriendpending", idt);
+                        DataStore.GetInstance().Remove("tpfriendpending", (ulong) pending);
+                        DataStore.GetInstance().Add("tpfriendcooldown", (ulong) pending, 0);
                         DataStore.GetInstance().Remove("tpfriendpending2", id);
-                        player.MessageFrom(SysName, "Teleport Request Accepted!");
+                        player.MessageFrom(SysName, "Request denied!");
                     }
                     else
                     {
+                        player.MessageFrom(SysName, "No request to deny.");
+                    }
+
+                    break;
+                }
+                case "tpcancel":
+                {
+                    if (CheckPermissionsForDefaultCommands &&
+                        (!player.Admin || !PermissionSystem.GetPermissionSystem()
+                            .PlayerHasPermission(player, "tpfriend.tpcancel")))
+                    {
+                        player.MessageFrom(SysName, "You don't have permission to do this!");
+                        return;
+                    }
+                    
+                    object pending = DataStore.GetInstance().Get("tpfriendpending2", id);
+                    if (pending != null)
+                    {
+                        Fougerite.Player PlayerTo = Fougerite.Server.GetServer().FindPlayer((ulong) pending);
+                        if (PlayerTo != null)
+                        {
+                            PlayerTo.MessageFrom(SysName, red + player.Name + " Cancelled the request!");
+                            RemovePlayerFromPending(PlayerTo);
+                        }
                         RemovePlayerFromPending(player);
-                        player.MessageFrom(SysName, "Player isn't online!");
+
+                        DataStore.GetInstance().Remove("tpfriendpending", id);
+                        DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
+                        DataStore.GetInstance().Remove("tpfriendpending2", (ulong) pending);
+                        player.MessageFrom(SysName, "Request Cancelled!");
                     }
-                }
-            }
-            else if (cmd == "tpdeny")
-            {
-                object pending = DataStore.GetInstance().Get("tpfriendpending2", id);
-                if (pending != null)
-                {
-                    Fougerite.Player PlayerFrom = Fougerite.Server.GetServer().FindPlayer((ulong) pending);
-                    if (PlayerFrom != null)
+                    else
                     {
-                        PlayerFrom.MessageFrom(SysName, red + "Your request was denied!");
-                        RemovePlayerFromPending(PlayerFrom);
+                        player.MessageFrom(SysName, "No request to cancel.");
                     }
 
-                    RemovePlayerFromPending(player);
-                    DataStore.GetInstance().Remove("tpfriendpending", (ulong) pending);
-                    DataStore.GetInstance().Add("tpfriendcooldown", (ulong) pending, 0);
-                    DataStore.GetInstance().Remove("tpfriendpending2", id);
-                    player.MessageFrom(SysName, "Request denied!");
+                    break;
                 }
-                else
+                case "tpcount" when MaxUses > 0:
                 {
-                    player.MessageFrom(SysName, "No request to deny.");
-                }
-            }
-            else if (cmd == "tpcancel")
-            {
-                object pending = DataStore.GetInstance().Get("tpfriendpending2", id);
-                if (pending != null)
-                {
-                    Fougerite.Player PlayerTo = Fougerite.Server.GetServer().FindPlayer((ulong) pending);
-                    if (PlayerTo != null)
+                    if (CheckPermissionsForDefaultCommands &&
+                        (!player.Admin || !PermissionSystem.GetPermissionSystem()
+                            .PlayerHasPermission(player, "tpfriend.tpcount")))
                     {
-                        PlayerTo.MessageFrom(SysName, red + player.Name + " Cancelled the request!");
-                        RemovePlayerFromPending(PlayerTo);
+                        player.MessageFrom(SysName, "You don't have permission to do this!");
+                        return;
                     }
-                    RemovePlayerFromPending(player);
-
-                    DataStore.GetInstance().Remove("tpfriendpending", id);
-                    DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
-                    DataStore.GetInstance().Remove("tpfriendpending2", (ulong) pending);
-                    player.MessageFrom(SysName, "Request Cancelled!");
-                }
-                else
-                {
-                    player.MessageFrom(SysName, "No request to cancel.");
-                }
-            }
-            else if (cmd == "tpcount")
-            {
-                if (MaxUses > 0)
-                {
+                    
                     object uses = DataStore.GetInstance().Get("tpfriendusedtp", id) ?? 0;
 
                     player.MessageFrom(SysName, "Teleport requests used " + (int) uses + " / " + MaxUses);
+                    break;
                 }
-                else
+                case "tpcount":
                 {
+                    if (CheckPermissionsForDefaultCommands &&
+                        (!player.Admin || !PermissionSystem.GetPermissionSystem()
+                            .PlayerHasPermission(player, "tpfriend.tpcount")))
+                    {
+                        player.MessageFrom(SysName, "You don't have permission to do this!");
+                        return;
+                    }
+                    
                     player.MessageFrom(SysName, "You have unlimited requests remaining!");
+                    break;
                 }
-            }
-            else if (cmd == "tpresettime")
-            {
-                if (player.Admin)
+                case "tpresettime":
                 {
-                    DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
-                    player.Message("Reset!");
+                    if (player.Admin || PermissionSystem.GetPermissionSystem().PlayerHasPermission(player, "tpfriend.tpresettime"))
+                    {
+                        DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
+                        player.Message("Reset!");
+                    }
+
+                    break;
                 }
-            }
-            else if (cmd == "clearuses")
-            {
-                if (player.Admin)
+                case "clearuses":
                 {
-                    DataStore.GetInstance().Flush("tpfriendusedtp");
-                    player.MessageFrom(SysName, "Flushed!");
+                    if (player.Admin || PermissionSystem.GetPermissionSystem().PlayerHasPermission(player, "tpfriend.clearuses"))
+                    {
+                        DataStore.GetInstance().Flush("tpfriendusedtp");
+                        player.MessageFrom(SysName, "Flushed!");
+                    }
+
+                    break;
                 }
             }
         }
