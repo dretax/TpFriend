@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using Fougerite;
 using Fougerite.Concurrent;
-using Fougerite.Events;
 using Fougerite.Permissions;
 using UnityEngine;
 using Random = System.Random;
@@ -19,25 +18,25 @@ namespace TpFriend
         ExtraCheck = 5,
     }
     
-    public class TpFriend : Fougerite.Module
+    public class TpFriend : Module
     {
         public IniParser Settings;
         public readonly List<Vector3> DefaultLocations = new List<Vector3>();
         public readonly List<string> CannotTeleport = new List<string>();
         public readonly ConcurrentList<Fougerite.Player> Pending = new ConcurrentList<Fougerite.Player>();
-        public bool PerformCeilingCheck = false;
+        public bool PerformCeilingCheck;
         public float CeilingFallthroughDistanceCheck = 2.6f;
-        public int MaxUses = 0;
+        public int MaxUses;
         public int Cooldown = 1200000;
         public int RequestTimeout = 35;
         public int TeleportDelay = 10;
         public int DoubleTeleportDelay = 2;
         public int TpCheck = 2;
         public string SysName = "[TpFriend]";
-        public bool CheckIfPlayerIsNearStructure = false;
-        public bool CheckIfPlayerIsOnDeployable = false;
-        public bool CheckIfPlayerIsInShelter = false;
-        public bool CheckPermissionsForDefaultCommands = false;
+        public bool CheckIfPlayerIsNearStructure;
+        public bool CheckIfPlayerIsOnDeployable;
+        public bool CheckIfPlayerIsInShelter;
+        public bool CheckPermissionsForDefaultCommands;
         
         public readonly Random Randomizer = new Random();
         
@@ -62,7 +61,7 @@ namespace TpFriend
 
         public override Version Version
         {
-            get { return new Version("1.1"); }
+            get { return new Version("1.1.1"); }
         }
 
         public override void Initialize()
@@ -73,21 +72,29 @@ namespace TpFriend
             DataStore.GetInstance().Flush("tpfriendpending2");
             DataStore.GetInstance().Flush("tpfriendcooldown");
             DataStore.GetInstance().Flush("tpfriendy");
-            
-            IniParser DefLocs = new IniParser(ModuleFolder + "\\DefaultLoc.ini");
-            Util instance = Util.GetUtil();
-            foreach (var x in DefLocs.EnumSection("DefaultLoc"))
+
+            try
             {
-                try
+                IniParser DefLocs = new IniParser(ModuleFolder + "\\DefaultLoc.ini");
+                Util instance = Util.GetUtil();
+                foreach (var x in DefLocs.EnumSection("DefaultLoc"))
                 {
-                    string value = DefLocs.GetSetting("DefaultLoc", x);
-                    DefaultLocations.Add(instance.ConvertStringToVector3(value));
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogError("[TpFriend] Failed to convert Vector " + ex);
+                    try
+                    {
+                        string value = DefLocs.GetSetting("DefaultLoc", x);
+                        DefaultLocations.Add(instance.ConvertStringToVector3(value));
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError("[TpFriend] Failed to convert Vector " + ex);
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+                Logger.LogError("[TpFriend] Failed to read DefaultLoc.ini! " + ex);
+            }
+
             ReloadConfig();
             Hooks.OnCommand += OnCommand;
             Hooks.OnPlayerDisconnected += OnPlayerDisconnected;
@@ -160,18 +167,17 @@ namespace TpFriend
                 }
             }
 
-            if (count == 0)
+            switch (count)
             {
-                Sender.MessageFrom(SysName, "Couldn't find [color#00FF00]" + printablename + "[/color]!");
-            }
-            else if (count > 1)
-            {
-                Sender.MessageFrom(SysName, "Found [color#FF0000]" + count
-                                                                   + "[/color] players with similar name. [color#FF0000] Use more correct name![/color]");
-            }
-            else
-            {
-                return Similar;
+                case 0:
+                    Sender.MessageFrom(SysName, "Couldn't find [color#00FF00]" + printablename + "[/color]!");
+                    break;
+                case > 1:
+                    Sender.MessageFrom(SysName, "Found [color#FF0000]" + count 
+                                                                       + "[/color] players with similar name. [color#FF0000] Use more correct name![/color]");
+                    break;
+                default:
+                    return Similar;
             }
 
             return null;
@@ -289,15 +295,14 @@ namespace TpFriend
                     ulong idt = playertor.UID;
                     string namet = playertor.Name;
                     object ttime = DataStore.GetInstance().Get("tpfriendcooldown", id);
-                    if (ttime == null)
+                    if (ttime == null || ttime is not double)
                     {
                         ttime = 0;
                         DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
                     }
+                    
                     double time = (double) ttime;
-
                     object usedtp = DataStore.GetInstance().Get("tpfriendusedtp", id);
-
                     double calc = (TimeSpan.FromTicks(DateTime.Now.Ticks).TotalSeconds - time);
                     
                     if (calc >= Cooldown || time == 0)
@@ -310,7 +315,7 @@ namespace TpFriend
 
                         if (MaxUses > 0)
                         {
-                            if (MaxUses <= (int) usedtp)
+                            if (usedtp is int usedtpInt && MaxUses <= usedtpInt)
                             {
                                 player.MessageFrom(SysName, "Reached max number of teleport requests!");
                                 return;
@@ -332,8 +337,7 @@ namespace TpFriend
                         playertor.MessageFrom(SysName, "Teleport request from " + name + " to accept write /tpaccept");
                         player.MessageFrom(SysName, "Teleport request sent to " + namet);
 
-                        DataStore.GetInstance().Add("tpfriendcooldown", id,
-                            TimeSpan.FromTicks(DateTime.Now.Ticks).TotalSeconds);
+                        DataStore.GetInstance().Add("tpfriendcooldown", id, TimeSpan.FromTicks(DateTime.Now.Ticks).TotalSeconds);
                         DataStore.GetInstance().Add("tpfriendpending", id, idt);
                         DataStore.GetInstance().Add("tpfriendpending2", idt, id);
                         
@@ -377,21 +381,22 @@ namespace TpFriend
                     }
                     
                     object ppending = DataStore.GetInstance().Get("tpfriendpending2", id);
-                    if (ppending != null)
+                    if (ppending is ulong ppendingUid)
                     {
-                        Fougerite.Player PlayerFrom = Fougerite.Server.GetServer().FindPlayer((ulong) ppending);
+                        Fougerite.Player PlayerFrom = Server.GetServer().FindPlayer(ppendingUid);
                         if (PlayerFrom != null)
                         {
                             RemovePlayerFromPending(player);
                             RemovePlayerFromPending(PlayerFrom);
 
-                            int playertpuse = (int) DataStore.GetInstance().Get("tpfriendusedtp", (ulong) ppending);
+                            object playertpuse = DataStore.GetInstance().Get("tpfriendusedtp", ppendingUid) ?? 0;
+                            int playerTpUseInt = playertpuse is int castInt ? castInt : 0;
 
                             if (MaxUses > 0)
                             {
-                                playertpuse++;
-                                DataStore.GetInstance().Add("tpfriendusedtp", (ulong) ppending, playertpuse);
-                                PlayerFrom.MessageFrom(SysName, "Teleport requests used " + playertpuse + " / "
+                                playerTpUseInt++;
+                                DataStore.GetInstance().Add("tpfriendusedtp", ppendingUid, playerTpUseInt);
+                                PlayerFrom.MessageFrom(SysName, "Teleport requests used " + playerTpUseInt + " / "
                                                                 + MaxUses);
                             }
                             else
@@ -476,6 +481,11 @@ namespace TpFriend
                             player.MessageFrom(SysName, "Player isn't online!");
                         }
                     }
+                    else
+                    {
+                        // Sanity removal check
+                        DataStore.GetInstance().Remove("tpfriendpending2", id);
+                    }
 
                     break;
                 }
@@ -490,9 +500,9 @@ namespace TpFriend
                     }
                     
                     object pending = DataStore.GetInstance().Get("tpfriendpending2", id);
-                    if (pending != null)
+                    if (pending is ulong ppendingUid)
                     {
-                        Fougerite.Player PlayerFrom = Fougerite.Server.GetServer().FindPlayer((ulong) pending);
+                        Fougerite.Player PlayerFrom = Server.GetServer().FindPlayer(ppendingUid);
                         if (PlayerFrom != null)
                         {
                             PlayerFrom.MessageFrom(SysName, red + "Your request was denied!");
@@ -500,14 +510,16 @@ namespace TpFriend
                         }
 
                         RemovePlayerFromPending(player);
-                        DataStore.GetInstance().Remove("tpfriendpending", (ulong) pending);
-                        DataStore.GetInstance().Add("tpfriendcooldown", (ulong) pending, 0);
+                        DataStore.GetInstance().Remove("tpfriendpending", ppendingUid);
+                        DataStore.GetInstance().Add("tpfriendcooldown", ppendingUid, 0);
                         DataStore.GetInstance().Remove("tpfriendpending2", id);
                         player.MessageFrom(SysName, "Request denied!");
                     }
                     else
                     {
                         player.MessageFrom(SysName, "No request to deny.");
+                        // Sanity removal check
+                        DataStore.GetInstance().Remove("tpfriendpending2", id);
                     }
 
                     break;
@@ -523,9 +535,9 @@ namespace TpFriend
                     }
                     
                     object pending = DataStore.GetInstance().Get("tpfriendpending2", id);
-                    if (pending != null)
+                    if (pending is ulong ppendingUid)
                     {
-                        Fougerite.Player PlayerTo = Fougerite.Server.GetServer().FindPlayer((ulong) pending);
+                        Fougerite.Player PlayerTo = Server.GetServer().FindPlayer(ppendingUid);
                         if (PlayerTo != null)
                         {
                             PlayerTo.MessageFrom(SysName, red + player.Name + " Cancelled the request!");
@@ -535,12 +547,14 @@ namespace TpFriend
 
                         DataStore.GetInstance().Remove("tpfriendpending", id);
                         DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
-                        DataStore.GetInstance().Remove("tpfriendpending2", (ulong) pending);
+                        DataStore.GetInstance().Remove("tpfriendpending2", ppendingUid);
                         player.MessageFrom(SysName, "Request Cancelled!");
                     }
                     else
                     {
                         player.MessageFrom(SysName, "No request to cancel.");
+                        // Sanity removal check
+                        DataStore.GetInstance().Remove("tpfriendpending2", id);
                     }
 
                     break;
@@ -577,8 +591,22 @@ namespace TpFriend
                 {
                     if (player.Admin || PermissionSystem.GetPermissionSystem().PlayerHasPermission(player, "tpfriend.tpresettime"))
                     {
-                        DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
-                        player.Message("Reset!");
+                        if (args.Length == 0)
+                        {
+                            DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
+                            player.Message("Reset!");
+                        }
+                        else
+                        {
+                            Fougerite.Player playertor = FindSimilarPlayer(player, args);
+                            if (playertor == null)
+                            {
+                                return;
+                            }
+                            
+                            DataStore.GetInstance().Add("tpfriendcooldown", playertor.UID, 0);
+                            player.Message("Reset!");
+                        }
                     }
 
                     break;
@@ -589,6 +617,30 @@ namespace TpFriend
                     {
                         DataStore.GetInstance().Flush("tpfriendusedtp");
                         player.MessageFrom(SysName, "Flushed!");
+                    }
+
+                    break;
+                }
+                case "clearusesof":
+                {
+                    if (player.Admin || PermissionSystem.GetPermissionSystem().PlayerHasPermission(player, "tpfriend.clearusesof"))
+                    {
+                        if (args.Length == 0)
+                        {
+                            DataStore.GetInstance().Remove("tpfriendusedtp", id);
+                            player.Message("Reset!");
+                        }
+                        else
+                        {
+                            Fougerite.Player playertor = FindSimilarPlayer(player, args);
+                            if (playertor == null)
+                            {
+                                return;
+                            }
+                            
+                            DataStore.GetInstance().Remove("tpfriendusedtp", playertor.UID);
+                            player.Message("Reset!");
+                        }
                     }
 
                     break;
