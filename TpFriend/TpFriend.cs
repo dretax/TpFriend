@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using Fougerite;
 using Fougerite.Concurrent;
@@ -216,7 +217,7 @@ namespace TpFriend
                 CeilingFallthroughDistanceCheck =
                     float.Parse(Settings.GetSetting("Settings", "CeilingFallthroughDistanceCheck"));
                 MaxUses = int.Parse(Settings.GetSetting("Settings", "MaxUses"));
-                Cooldown = int.Parse(Settings.GetSetting("Settings", "Cooldown"));
+                Cooldown = int.Parse(Settings.GetSetting("Settings", "Cooldown")) / 60000 * 60;
                 RequestTimeout = int.Parse(Settings.GetSetting("Settings", "RequestTimeout"));
                 TeleportDelay = int.Parse(Settings.GetSetting("Settings", "TeleportDelay"));
                 DoubleTeleportDelay = int.Parse(Settings.GetSetting("Settings", "DoubleTeleportDelay"));
@@ -295,13 +296,13 @@ namespace TpFriend
                     ulong idt = playertor.UID;
                     string namet = playertor.Name;
                     object ttime = DataStore.GetInstance().Get("tpfriendcooldown", id);
-                    if (ttime == null || ttime is not double)
+                    double time = 0;
+                    if (ttime == null || !double.TryParse(Convert.ToString(ttime, CultureInfo.InvariantCulture),
+                            NumberStyles.Any, NumberFormatInfo.InvariantInfo, out time))
                     {
-                        ttime = 0;
                         DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
                     }
                     
-                    double time = (double) ttime;
                     object usedtp = DataStore.GetInstance().Get("tpfriendusedtp", id);
                     double calc = (TimeSpan.FromTicks(DateTime.Now.Ticks).TotalSeconds - time);
                     
