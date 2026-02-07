@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using Fougerite;
 using Fougerite.Concurrent;
+using Fougerite.Events;
 using Fougerite.Permissions;
 using UnityEngine;
 using Random = System.Random;
@@ -62,7 +63,7 @@ namespace TpFriend
 
         public override Version Version
         {
-            get { return new Version("1.1.1"); }
+            get { return new Version("1.1.2"); }
         }
 
         public override void Initialize()
@@ -106,6 +107,7 @@ namespace TpFriend
             DefaultLocations.Clear();
             Hooks.OnCommand -= OnCommand;
             Hooks.OnPlayerDisconnected -= OnPlayerDisconnected;
+            KillTimers();
         }
 
         private Fougerite.Player GetPlayerByName(string name)
@@ -303,20 +305,20 @@ namespace TpFriend
                         DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
                     }
                     
-                    object usedtp = DataStore.GetInstance().Get("tpfriendusedtp", id);
+                    object playertpuse = DataStore.GetInstance().Get("tpfriendusedtp", id) ?? 0;
+                    int uses = playertpuse is int castInt ? castInt : 0;
                     double calc = (TimeSpan.FromTicks(DateTime.Now.Ticks).TotalSeconds - time);
                     
                     if (calc >= Cooldown || time == 0)
                     {
-                        if (usedtp == null)
+                        if (uses == 0)
                         {
                             DataStore.GetInstance().Add("tpfriendusedtp", id, 0);
-                            usedtp = 0;
                         }
 
                         if (MaxUses > 0)
                         {
-                            if (usedtp is int usedtpInt && MaxUses <= usedtpInt)
+                            if (MaxUses <= uses)
                             {
                                 player.MessageFrom(SysName, "Reached max number of teleport requests!");
                                 return;
@@ -349,7 +351,7 @@ namespace TpFriend
                         Data["Player"] = player;
                         Data["PlayerTo"] = playertor;
                         Data["Event"] = TeleportationEvent.Timeout;
-                        CreateParallelTimer(RequestTimeout * 1000, Data).Start();
+                        CreateParallelTimer("TpFriend_Timeout", RequestTimeout * 1000, Data, Callback).Start();
                     }
                     else
                     {
@@ -413,7 +415,7 @@ namespace TpFriend
                                 Data2["Player"] = PlayerFrom;
                                 Data2["PlayerTo"] = PlayerFrom;
                                 Data2["Event"] = TeleportationEvent.FirstTeleport;
-                                CreateParallelTimer(TeleportDelay * 1000, Data2).Start();
+                                CreateParallelTimer("TpFriend_Delay", TeleportDelay * 1000, Data2, Callback).Start();
                             }
                             else
                             {
@@ -421,7 +423,7 @@ namespace TpFriend
                                 {
                                     if (player.IsInShelter)
                                     {
-                                        DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
+                                        DataStore.GetInstance().Add("tpfriendcooldown", ppendingUid, 0);
                                         PlayerFrom.MessageFrom(SysName, "Your target player is in a shelter, can't teleport!");
                                         player.MessageFrom(SysName, "You are in a shelter, can't teleport the player!");
                                         return;
@@ -432,7 +434,7 @@ namespace TpFriend
                                 {
                                     if (player.IsOnDeployable)
                                     {
-                                        DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
+                                        DataStore.GetInstance().Add("tpfriendcooldown", ppendingUid, 0);
                                         PlayerFrom.MessageFrom(SysName, "Your target player is on a Deployable, can't teleport!");
                                         player.MessageFrom(SysName, "You are on a Deployable, can't teleport the player!");
                                         return;
@@ -443,7 +445,7 @@ namespace TpFriend
                                 {
                                     if (player.IsNearStructure)
                                     {
-                                        DataStore.GetInstance().Add("tpfriendcooldown", id, 0);
+                                        DataStore.GetInstance().Add("tpfriendcooldown", ppendingUid, 0);
                                         PlayerFrom.MessageFrom(SysName, "Your player is near a house, can't teleport!");
                                         player.MessageFrom(SysName, "You are near a house, can't teleport!");
                                         return;
@@ -461,15 +463,14 @@ namespace TpFriend
                                     Data3["Player"] = PlayerFrom;
                                     Data3["PlayerTo"] = PlayerFrom;
                                     Data3["Event"] = TeleportationEvent.AutobanReset;
-                                    CreateParallelTimer(500, Data3).Start(); 
+                                    CreateParallelTimer("TpFriend_Autoban", 500, Data3, Callback).Start(); 
                                 }
-                                //DataStore.GetInstance().Add("tpfriendautoban", idt, "none");
 
                                 Dictionary<string, object> Data2 = new Dictionary<string, object>(3);
                                 Data2["Player"] = PlayerFrom;
                                 Data2["PlayerTo"] = PlayerFrom;
                                 Data2["Event"] = TeleportationEvent.ReTeleported;
-                                CreateParallelTimer(DoubleTeleportDelay * 1000, Data2).Start();
+                                CreateParallelTimer("TpFriend_ReTP", DoubleTeleportDelay * 1000, Data2, Callback).Start();
                             }
 
                             DataStore.GetInstance().Remove("tpfriendpending", idt);
@@ -535,7 +536,7 @@ namespace TpFriend
                         return;
                     }
                     
-                    object pending = DataStore.GetInstance().Get("tpfriendpending2", id);
+                    object pending = DataStore.GetInstance().Get("tpfriendpending", id);
                     if (pending is ulong ppendingUid)
                     {
                         Fougerite.Player PlayerTo = Server.GetServer().FindPlayer(ppendingUid);
@@ -555,7 +556,7 @@ namespace TpFriend
                     {
                         player.MessageFrom(SysName, "No request to cancel.");
                         // Sanity removal check
-                        DataStore.GetInstance().Remove("tpfriendpending2", id);
+                        DataStore.GetInstance().Remove("tpfriendpending", id);
                     }
 
                     break;
@@ -570,9 +571,10 @@ namespace TpFriend
                         return;
                     }
                     
-                    object uses = DataStore.GetInstance().Get("tpfriendusedtp", id) ?? 0;
+                    object playertpuse = DataStore.GetInstance().Get("tpfriendusedtp", id) ?? 0;
+                    int uses = playertpuse is int castInt ? castInt : 0;
 
-                    player.MessageFrom(SysName, "Teleport requests used " + (int) uses + " / " + MaxUses);
+                    player.MessageFrom(SysName, "Teleport requests used " + uses + " / " + MaxUses);
                     break;
                 }
                 case "tpcount":
@@ -665,15 +667,7 @@ namespace TpFriend
             }
         }
 
-        private TpFriendTE CreateParallelTimer(int timeoutDelay, Dictionary<string, object> args)
-        {
-            TpFriendTE timedEvent = new TpFriendTE(timeoutDelay);
-            timedEvent.Args = args;
-            timedEvent.OnFire += Callback;
-            return timedEvent;
-        }
-
-        private void Callback(TpFriendTE e)
+        private void Callback(TimedEvent e)
         {
             e.Kill();
             Dictionary<string, object> Data = e.Args;
@@ -739,7 +733,7 @@ namespace TpFriend
                 Data2["Player"] = PlayerFrom;
                 Data2["PlayerTo"] = PlayerFrom;
                 Data2["Event"] = TeleportationEvent.ReTeleported;
-                CreateParallelTimer(DoubleTeleportDelay * 1000, Data2).Start();
+                CreateParallelTimer("TpFriend_ReTP", DoubleTeleportDelay * 1000, Data2, Callback).Start();
             }
             // Autokill
             else if (evt == TeleportationEvent.Timeout)
@@ -790,7 +784,7 @@ namespace TpFriend
                     Data2["Player"] = PlayerFrom;
                     Data2["PlayerTo"] = PlayerFrom;
                     Data2["Event"] = TeleportationEvent.ExtraCheck;
-                    CreateParallelTimer(2000, Data2).Start(); 
+                    CreateParallelTimer("TpFriend_ExtraCheck", 2000, Data2, Callback).Start(); 
                 }
             }
             else if (evt == TeleportationEvent.AutobanReset)
@@ -817,7 +811,7 @@ namespace TpFriend
                 Data2["Player"] = PlayerFrom;
                 Data2["PlayerTo"] = PlayerFrom;
                 Data2["Event"] = TeleportationEvent.AutobanReset;
-                CreateParallelTimer(2000, Data2).Start();
+                CreateParallelTimer("TpFriend_Autoban", 2000, Data2, Callback).Start();
             }
         }
     }

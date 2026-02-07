@@ -56,7 +56,6 @@
     <ItemGroup>
         <Compile Include="TpFriend.cs" />
         <Compile Include="Properties\AssemblyInfo.cs" />
-        <Compile Include="TpFriendTE.cs" />
     </ItemGroup>
     <ItemGroup>
       <Content Include="DefaultLoc.ini" />
